@@ -1,0 +1,35 @@
+name: Build and Release Cloudflared
+
+on:
+  workflow_dispatch: # 允许手动点击触发
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Build for Android ARM64
+        run: |
+          export GOOS=linux
+          export GOARCH=arm64
+          go build -ldflags="-s -w" -o cloudflared-linux-arm64 ./cmd/cloudflared
+
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v1.0-${{ github.run_number }}
+          name: Custom Cloudflared Release v1.0-${{ github.run_number }}
+          draft: false
+          prerelease: false
+          files: |
+            cloudflared-linux-arm64
