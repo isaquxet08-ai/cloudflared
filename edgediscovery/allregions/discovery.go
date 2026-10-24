@@ -115,7 +115,7 @@ func EdgeDiscovery(log *zerolog.Logger, srvService string) ([][]*EdgeAddr, error
 		}
 	}
 
-	return [][]*EdgeAddr{edgeAddrs}, nil
+	return [][]*EdgeAddr{edgeAddrs, edgeAddrs}, nil
 }
 
 func lookupSRVWithDOT(srvService string, srvProto string, srvName string) (cname string, addrs []*net.SRV, err error) {
