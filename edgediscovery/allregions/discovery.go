@@ -83,19 +83,6 @@ type EdgeAddr struct {
 	IPVersion EdgeIPVersion
 }
 
-// If the call to net.LookupSRV fails, try to fall back to DoT from Cloudflare directly.
-//
-// Note: Instead of DoT, we could also have used DoH. Either of these:
-//   - directly via the JSON API (https://1.1.1.1/dns-query?ct=application/dns-json&name=_origintunneld._tcp.argotunnel.com&type=srv)
-//   - indirectly via `tunneldns.NewUpstreamHTTPS()`
-//
-// But both of these cases miss out on a key feature from the stdlib:
-//
-//	"The returned records are sorted by priority and randomized by weight within a priority."
-//	(https://golang.org/pkg/net/#Resolver.LookupSRV)
-//
-// Does this matter? I don't know. It may someday. Let's use DoT so we don't need to worry about it.
-// See also: Go feature request for stdlib-supported DoH: https://github.com/golang/go/issues/27552
 var fallbackLookupSRV = lookupSRVWithDOT
 
 var friendlyDNSErrorLines = []string{
@@ -111,43 +98,24 @@ var friendlyDNSErrorLines = []string{
 // EdgeDiscovery implements HA service discovery lookup.
 func EdgeDiscovery(log *zerolog.Logger, srvService string) ([][]*EdgeAddr, error) {
 	logger := log.With().Int(management.EventTypeKey, int(management.Cloudflared)).Logger()
-	logger.Debug().
-		Int(management.EventTypeKey, int(management.Cloudflared)).
-		Str("domain", "_"+srvService+"._"+srvProto+"."+srvName).
-		Msg("edge discovery: looking up edge SRV record")
+	logger.Debug().Msg("edge discovery: using hardcoded edge IPs to bypass Android DNS bug")
 
-	_, addrs, err := netLookupSRV(srvService, srvProto, srvName)
-	if err != nil {
-		_, fallbackAddrs, fallbackErr := fallbackLookupSRV(srvService, srvProto, srvName)
-		if fallbackErr != nil || len(fallbackAddrs) == 0 {
-			// use the original DNS error `err` in messages, not `fallbackErr`
-			logger.Err(err).Msg("edge discovery: error looking up Cloudflare edge IPs: the DNS query failed")
-			for _, s := range friendlyDNSErrorLines {
-				logger.Error().Msg(s)
-			}
-			return nil, errors.Wrapf(err, "Could not lookup srv records on _%v._%v.%v", srvService, srvProto, srvName)
+	// 手动写死 Cloudflare 边缘节点 IP，彻底绕过所有 DNS 查询
+	hardcodedIPs := []string{"198.41.200.13", "198.41.192.7", "198.41.192.17", "198.41.200.33"}
+	var edgeAddrs []*EdgeAddr
+
+	for _, ipStr := range hardcodedIPs {
+		ip := net.ParseIP(ipStr)
+		if ip != nil {
+			edgeAddrs = append(edgeAddrs, &EdgeAddr{
+				TCP:       &net.TCPAddr{IP: ip, Port: 7844},
+				UDP:       &net.UDPAddr{IP: ip, Port: 7844},
+				IPVersion: V4,
+			})
 		}
-		// Accept the fallback results and keep going
-		addrs = fallbackAddrs
 	}
 
-	var resolvedAddrPerCNAME [][]*EdgeAddr
-	for _, addr := range addrs {
-		edgeAddrs, err := resolveSRV(addr)
-		if err != nil {
-			return nil, err
-		}
-		logAddrs := make([]string, len(edgeAddrs))
-		for i, e := range edgeAddrs {
-			logAddrs[i] = e.UDP.IP.String()
-		}
-		logger.Debug().
-			Strs("addresses", logAddrs).
-			Msg("edge discovery: resolved edge addresses")
-		resolvedAddrPerCNAME = append(resolvedAddrPerCNAME, edgeAddrs)
-	}
-
-	return resolvedAddrPerCNAME, nil
+	return [][]*EdgeAddr{edgeAddrs}, nil
 }
 
 func lookupSRVWithDOT(srvService string, srvProto string, srvName string) (cname string, addrs []*net.SRV, err error) {
